@@ -17,7 +17,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from mca.llm.types import ToolCall
-from mca.tools.base import Tool, ToolContext, ToolError, ToolResult, ToolStatus
+from mca.security import redact_secrets
+from mca.tools.base import Tool, ToolBlocked, ToolContext, ToolError, ToolResult, ToolStatus
 from mca.tools.truncate import truncate_middle
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ class ToolRegistry:
         except TimeoutError:
             return _result(call, "timeout",
                            f"错误: 工具 {tool.name} 执行超过 {tool.timeout_s:.0f}s 被终止。请缩小操作范围后重试。")
+        except ToolBlocked as e:
+            logger.warning("Tool %s blocked by policy: %s", tool.name, call.arguments)
+            return _result(call, "blocked", f"已拦截: {e}")
         except ToolError as e:
             return _result(call, "error", f"错误: {e}")
         except Exception as e:  # noqa: BLE001 —— 工具 bug 不能拖垮 Agent
@@ -107,9 +111,15 @@ class ToolRegistry:
             return _result(call, "internal_error",
                            f"工具内部错误（{type(e).__name__}: {e}）。这不是参数问题，请尝试用其他方式完成任务。")
 
-        # ⑤ 输出截断
+        # ⑤ 密钥脱敏（第二道防线，先于截断：避免密钥恰好被截在边界上导致正则漏匹配）
+        output, redactions = redact_secrets(output)
+        if redactions:
+            logger.warning("Redacted %d secret(s) from %s output", redactions, tool.name)
+
+        # ⑥ 输出截断
         text, truncated = truncate_middle(output, tool.max_output_chars)
-        return ToolResult(call.id, call.name, "ok", text, raw_chars=len(output), truncated=truncated)
+        return ToolResult(call.id, call.name, "ok", text,
+                          raw_chars=len(output), truncated=truncated, redactions=redactions)
 
 
 # ---------------- 错误格式化：把异常翻译成模型能看懂、能改正的反馈 ----------------

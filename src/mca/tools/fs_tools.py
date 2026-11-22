@@ -15,7 +15,8 @@ from pathlib import Path
 
 from pydantic import Field
 
-from mca.tools.base import Tool, ToolContext, ToolError, ToolParams
+from mca.security import is_sensitive_path
+from mca.tools.base import Tool, ToolBlocked, ToolContext, ToolError, ToolParams
 
 IGNORED_DIRS = {
     ".git", ".hg", ".svn", ".venv", "venv", "env", "__pycache__", "node_modules",
@@ -104,6 +105,11 @@ class ReadFileTool(Tool):
             raise ToolError(f"文件不存在: {params.path}。可先用 list_dir 或 search_code 确认路径。")
         if p.is_dir():
             raise ToolError(f"'{params.path}' 是目录，请使用 list_dir 查看。")
+        if is_sensitive_path(p):
+            raise ToolBlocked(
+                f"'{params.path}' 可能包含密钥等敏感信息，禁止读取。"
+                f"如需了解配置项，请阅读对应的模板文件（如 .env.example）或配置类源码。"
+            )
         try:
             text = p.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -160,6 +166,8 @@ class SearchCodeTool(Tool):
         for f in files:
             if params.file_glob and not fnmatch(f.name, params.file_glob):
                 continue
+            if is_sensitive_path(f):
+                continue  # 否则 search_code("API_KEY") 就能绕过 read_file 的拦截
             try:
                 if f.stat().st_size > MAX_FILE_BYTES:
                     continue

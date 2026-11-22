@@ -33,6 +33,10 @@ class ToolError(Exception):
     """
 
 
+class ToolBlocked(ToolError):
+    """被安全策略拦截（status=blocked）。与普通错误区分，便于在 Trace 中审计越权尝试。"""
+
+
 class ToolParams(BaseModel):
     """所有工具参数模型的基类。
 
@@ -110,6 +114,7 @@ class ToolResult:
     content: str              # 回传给模型的文本（已截断）
     raw_chars: int = 0        # 截断前的长度，用于 Trace 分析"哪个工具输出最占上下文"
     truncated: bool = False
+    redactions: int = 0       # 输出中被打码的密钥数量（>0 说明有密钥险些泄露，值得审计）
     latency_ms: float = 0.0
 
     @property

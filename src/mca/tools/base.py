@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from mca.llm.types import Message
 from mca.tools.schema import simplify_schema
+
+if TYPE_CHECKING:
+    from mca.sandbox.base import Sandbox
 
 ToolStatus = Literal[
     "ok",              # 正常
@@ -49,12 +53,20 @@ class ToolParams(BaseModel):
 
 @dataclass
 class ToolContext:
-    """工具执行时的环境。目前只有工作区根目录，下一课会加入 Sandbox。"""
+    """工具执行时的环境：工作区根目录 + 沙箱 + 禁止修改的文件模式。"""
 
     workspace: Path
+    sandbox: Sandbox | None = None
+    # 例如 Fix 模式下设为 ("tests/*", "test_*.py")，防止模型通过改测试来作弊（reward hacking）
+    protected_globs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         self.workspace = Path(self.workspace).resolve()
+
+    def is_protected(self, rel_path: str) -> bool:
+        rel_path = rel_path.replace("\\", "/")
+        name = Path(rel_path).name
+        return any(fnmatch(rel_path, pat) or fnmatch(name, pat) for pat in self.protected_globs)
 
     def resolve_path(self, path: str) -> Path:
         """把模型给的路径解析为工作区内的绝对路径，并做越界检查。

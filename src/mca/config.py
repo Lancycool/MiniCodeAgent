@@ -27,7 +27,8 @@ class LLMSettings(BaseSettings):
     model: str = "deepseek-v4.1-flash"
 
     temperature: float = Field(0.0, ge=0.0, le=2.0)
-    max_tokens: int = Field(4096, gt=0)
+    # 思考型模型（含 reasoning_content）的推理过程计入 max_tokens，4096 在复杂编辑中易触发 finish=length 截断
+    max_tokens: int = Field(8192, gt=0)
     timeout_s: float = Field(120.0, gt=0)
 
     # 重试策略（我们自己实现重试，SDK 内置重试会被关闭）

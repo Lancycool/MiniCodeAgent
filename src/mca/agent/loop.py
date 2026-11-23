@@ -259,7 +259,7 @@ class AgentLoop:
                 except Exception:
                     state.final_summary = res.content
 
-        # ⑤ 状态转移决策：submit → VERIFYING；否则检查 LoopGuard
+        # ⑤ 状态转移决策：submit → VERIFYING；否则检查 LoopGuard 与只读探索停滞提醒
         stuck: StuckReason | None = None
         if submitted:
             state.phase = Phase.VERIFYING
@@ -268,6 +268,18 @@ class AgentLoop:
             if stuck is not None:
                 self.tracer.update_step(step_id, guard_event=stuck.code)
                 state.phase = Phase.RECOVERING
+            else:
+                # 防止“分析瘫痪”：连续多步只读不写且步数过半前仍未动手，注入确定性推进提醒
+                has_edited = any(a.tool_name == "edit_file" and a.status == "ok" for a in state.actions)
+                if not has_edited and state.step_no in (8, 13):
+                    rem = self.budget.max_steps - state.step_no
+                    self.tracer.update_step(step_id, guard_event="nudge_start_editing")
+                    state.messages.append(
+                        Message.user(
+                            f"[进度提醒] 你已经连续只读探索了 {state.step_no} 步，尚未进行任何代码修改（仅剩 {rem} 步）。"
+                            f"请停止重复读取文件，立即基于已掌握的信息用 edit_file 做出首次修复，并用目标测试文件验证。"
+                        )
+                    )
 
         self.tracer.update_step(step_id, duration_ms=(time.perf_counter() - t0) * 1000)
         return stuck

@@ -201,8 +201,8 @@ async def evaluate_swebench_instance(
                     ContextConfig(
                         mask_enabled=cfg.mask_enabled,
                         summary_enabled=cfg.summary_enabled,
-                        keep_recent_turns=4,
-                        min_mask_chars=400,
+                        keep_recent_turns=6,
+                        min_mask_chars=1200,
                     )
                 ),
                 inject_repo_map=cfg.inject_repo_map,

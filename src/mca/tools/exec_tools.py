@@ -21,7 +21,7 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\brm\s+-[^\s]*r[^\s]*f[^\s]*\s+(/|\*|\.\.)"), "禁止高危递归删除命令"),
     (re.compile(r"\bgit\s+(push|reset|checkout|rebase|clean)\b"), "禁止直接操作 git 历史/工作区，回滚由系统管理"),
     (re.compile(r"\b(curl|wget|nc|ncat|ssh|scp)\b"), "禁止网络传输命令"),
-    (re.compile(r"\b(pip|pip3|apt|apt-get)\s+install\b"), "沙箱禁网，禁止安装外部依赖"),
+    (re.compile(r"\b(pip|pip3|apt|apt-get)\s+(install|download)\b"), "沙箱禁网，禁止安装或下载外部依赖"),
     (re.compile(r"\b(sudo|su|chmod\s+777|mkfs|dd\s+if=)\b"), "禁止系统级特权命令"),
     (re.compile(r":\(\)\s*\{"), "检测到疑似 fork 炸弹"),
 ]

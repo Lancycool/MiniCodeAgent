@@ -16,6 +16,7 @@ import json
 import time
 from typing import Protocol
 
+from mca.agent.context import ContextConfig, ContextManager
 from mca.agent.guards import (
     LoopGuard,
     StuckReason,
@@ -24,6 +25,7 @@ from mca.agent.guards import (
     hash_args,
 )
 from mca.agent.state import ActionRecord, AgentState, Budget, Phase, RunResult
+from mca.codeindex import CodeIndex, extract_focus_terms
 from mca.llm.client import LLMClient
 from mca.llm.types import Message
 from mca.observability.tracer import Tracer
@@ -80,6 +82,9 @@ class AgentLoop:
         verifier: Verifier | None = None,
         budget: Budget | None = None,
         loop_guard: LoopGuard | None = None,
+        context_manager: ContextManager | None = None,
+        inject_repo_map: bool = False,
+        repo_map_max_chars: int = 3500,
         tracer: Tracer | None = None,
         system_prompt: str = DEFAULT_FIX_SYSTEM_PROMPT,
         protected_globs: tuple[str, ...] = ("test_*.py", "tests/*"),
@@ -90,21 +95,34 @@ class AgentLoop:
         self.verifier = verifier or PytestVerifier()
         self.budget = budget or Budget()
         self.loop_guard = loop_guard or LoopGuard()
+        self.context_manager = context_manager or ContextManager(ContextConfig(mask_enabled=True, summary_enabled=True))
+        self.inject_repo_map = inject_repo_map
+        self.repo_map_max_chars = repo_map_max_chars
         self.tracer = tracer or Tracer()
         self.system_prompt = system_prompt
         self.protected_globs = protected_globs
 
     async def run(self, issue: str, *, task_id: str = "ad_hoc", mode: str = "fix") -> RunResult:
         state = AgentState(task_id=task_id, mode=mode)
+        code_index = CodeIndex(self.sandbox.workspace)
+        code_index.build()
         ctx = ToolContext(
             workspace=self.sandbox.workspace,
             sandbox=self.sandbox,
+            code_index=code_index,
             protected_globs=self.protected_globs,
         )
 
         # ---- Phase: INIT ----
         state.checkpoints.append((0, self.sandbox.baseline_sha))
-        state.messages = [Message.system(self.system_prompt), Message.user(issue)]
+        user_prompt = issue
+        if self.inject_repo_map:
+            repo_map = code_index.build_repo_map(
+                max_chars=self.repo_map_max_chars,
+                focus_terms=extract_focus_terms(issue),
+            )
+            user_prompt = f"{issue}\n\n{repo_map}"
+        state.messages = [Message.system(self.system_prompt), Message.user(user_prompt)]
         self.tracer.start_run(state.run_id, task_id, mode)
         state.phase = Phase.RUNNING
 
@@ -162,11 +180,15 @@ class AgentLoop:
         t0 = time.perf_counter()
         step_id = self.tracer.start_step(state.run_id, state.step_no, state.phase.value)
 
-        # ② 调用 LLM
+        # ② 构建压缩后的上下文视图并调用 LLM
+        view_messages, compression = await self.context_manager.build(state.messages, llm=self.llm)
+        if compression != "none":
+            self.tracer.update_step(step_id, compression_applied=compression)
+
         try:
-            resp = await self.llm.chat(state.messages, tools=self.registry.schemas())
+            resp = await self.llm.chat(view_messages, tools=self.registry.schemas())
         except Exception as e:
-            self.tracer.log_llm_call(step_id, messages=state.messages, error=f"{type(e).__name__}: {e}")
+            self.tracer.log_llm_call(step_id, messages=view_messages, error=f"{type(e).__name__}: {e}")
             self.tracer.update_step(step_id, duration_ms=(time.perf_counter() - t0) * 1000)
             state.phase = Phase.FAILED
             state.exit_reason = "llm_error"
@@ -175,7 +197,7 @@ class AgentLoop:
         state.prompt_tokens += resp.usage.prompt_tokens
         state.completion_tokens += resp.usage.completion_tokens
         state.cached_tokens += resp.usage.cached_tokens
-        self.tracer.log_llm_call(step_id, messages=state.messages, resp=resp)
+        self.tracer.log_llm_call(step_id, messages=view_messages, resp=resp)
         self.tracer.update_step(step_id, context_tokens=resp.usage.prompt_tokens)
 
         msg = resp.message
@@ -223,10 +245,12 @@ class AgentLoop:
                 )
             )
 
-            # 记录 edit_file 创建的 checkpoint
+            # 记录 edit_file 创建的 checkpoint，并增量刷新 AST 索引
             if tc.name == "edit_file" and res.ok:
                 sha = await self.sandbox.checkpoint(f"step {state.step_no}")
                 state.checkpoints.append((state.step_no, sha))
+                if ctx.code_index is not None and sig:
+                    ctx.code_index.refresh_file(sig)
 
             if tc.name == "submit" and res.ok:
                 submitted = True

@@ -7,30 +7,17 @@
 
 from __future__ import annotations
 
-import os
 import re
-from collections.abc import Iterator
 from fnmatch import fnmatch
 from pathlib import Path
 
 from pydantic import Field
 
+from mca.fs_utils import IGNORED_DIRS, iter_files
 from mca.security import is_sensitive_path
 from mca.tools.base import Tool, ToolBlocked, ToolContext, ToolError, ToolParams
 
-IGNORED_DIRS = {
-    ".git", ".hg", ".svn", ".venv", "venv", "env", "__pycache__", "node_modules",
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".idea", ".vscode", "dist", "build",
-}
 MAX_FILE_BYTES = 1_000_000  # 超过 1MB 的文件视为非源码（数据/生成文件），搜索时跳过
-
-
-def iter_files(root: Path) -> Iterator[Path]:
-    """遍历目录，剪枝忽略目录；排序保证结果确定（同样的输入 → 同样的输出，便于复现与缓存）。"""
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS and not d.endswith(".egg-info"))
-        for name in sorted(filenames):
-            yield Path(dirpath) / name
 
 
 # ============================== list_dir ==============================

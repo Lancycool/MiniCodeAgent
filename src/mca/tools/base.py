@@ -57,6 +57,7 @@ class ToolContext:
 
     workspace: Path
     sandbox: Sandbox | None = None
+    code_index: Any = None  # 可选的 CodeIndex 实例，供 AST 工具复用与增量刷新
     # 例如 Fix 模式下设为 ("tests/*", "test_*.py")，防止模型通过改测试来作弊（reward hacking）
     protected_globs: tuple[str, ...] = ()
 

@@ -160,6 +160,7 @@ class TraceStore:
         step_id: int,
         *,
         context_tokens: int | None = None,
+        compression_applied: str | None = None,
         guard_event: str | None = None,
         duration_ms: float | None = None,
     ) -> None:
@@ -168,6 +169,9 @@ class TraceStore:
         if context_tokens is not None:
             fields.append("context_tokens = ?")
             values.append(context_tokens)
+        if compression_applied is not None:
+            fields.append("compression_applied = ?")
+            values.append(compression_applied)
         if guard_event is not None:
             fields.append("guard_event = ?")
             values.append(guard_event)

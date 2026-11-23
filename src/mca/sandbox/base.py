@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from mca.fs_utils import IGNORED_DIRS
 from mca.security import is_sensitive_path
-from mca.tools.fs_tools import IGNORED_DIRS
 
 
 @dataclass

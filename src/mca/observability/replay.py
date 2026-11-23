@@ -21,8 +21,9 @@ def format_run_replay(store: TraceStore, run_id: str) -> str:
     ]
     for s in trace["steps"]:
         guard = f" | GUARD={s['guard_event']}" if s["guard_event"] else ""
+        comp = f" | COMP={s['compression_applied']}" if s["compression_applied"] != "none" else ""
         lines.append(
-            f"\n[Step {s['step_no']} | {s['phase']} | ctx={s['context_tokens']} tok | {s['duration_ms']:.0f}ms{guard}]"
+            f"\n[Step {s['step_no']} | {s['phase']} | ctx={s['context_tokens']} tok | {s['duration_ms']:.0f}ms{comp}{guard}]"
         )
         for lc in s["llm_calls"]:
             if lc["error"]:

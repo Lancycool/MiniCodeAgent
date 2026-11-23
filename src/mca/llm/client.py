@@ -25,6 +25,7 @@ class LLMClient(Protocol):
         tools: list[dict[str, Any]] | None = None,
         *,
         tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse: ...
 
 
@@ -53,6 +54,7 @@ class OpenAICompatClient:
         tools: list[dict[str, Any]] | None = None,
         *,
         tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         s = self._settings
         payload: dict[str, Any] = {
@@ -65,6 +67,8 @@ class OpenAICompatClient:
             payload["tools"] = tools
             if tool_choice is not None:
                 payload["tool_choice"] = tool_choice
+        if response_format is not None:
+            payload["response_format"] = response_format
 
         start = time.perf_counter()
         resp, attempts = await call_with_retry(

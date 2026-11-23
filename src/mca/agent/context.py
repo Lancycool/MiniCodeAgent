@@ -162,8 +162,13 @@ def _find_recent_turn_start(tail: list[Message], keep_recent_turns: int) -> int:
     return assistant_indices[-keep_recent_turns]
 
 
+# 高信号工具（代码修改确认 / 测试结论）对后续决策影响极大，折叠阈值应高于普通读文件输出，
+# 避免模型因“看不到刚改完的代码和刚通过的测试”而陷入失忆重复检查（见 debug_log.md #8）。
+_HIGH_SIGNAL_TOOLS = {"edit_file", "run_tests", "submit"}
+
+
 def _mask_tool_observations(older: list[Message], *, min_chars: int) -> tuple[list[Message], bool]:
-    """把远期超过 min_chars 的 tool 消息折叠为一行占位符，保持消息对完整且不改原对象。"""
+    """把远期超过阈值的 tool 消息折叠为一行占位符，保持消息对完整且不改原对象。"""
     # 先建立 tool_call_id → (tool_name, 简短参数) 映射，让占位符清晰可恢复
     call_meta: dict[str, tuple[str, str]] = {}
     for m in older:
@@ -173,16 +178,18 @@ def _mask_tool_observations(older: list[Message], *, min_chars: int) -> tuple[li
     out: list[Message] = []
     did_mask = False
     for m in older:
-        if m.role == "tool" and m.content and len(m.content) >= min_chars:
+        if m.role == "tool" and m.content:
             name, short_args = call_meta.get(m.tool_call_id or "", ("tool", ""))
-            placeholder = (
-                f"[历史观察已折叠: {name}({short_args}) 原输出 {len(m.content)} 字符。"
-                f"如需原文请重新调用该工具]"
-            )
-            out.append(Message.tool(m.tool_call_id or "", placeholder))
-            did_mask = True
-        else:
-            out.append(m)
+            threshold = max(min_chars, 1500) if name in _HIGH_SIGNAL_TOOLS else min_chars
+            if len(m.content) >= threshold:
+                placeholder = (
+                    f"[历史观察已折叠: {name}({short_args}) 原输出 {len(m.content)} 字符。"
+                    f"如需原文请重新调用该工具]"
+                )
+                out.append(Message.tool(m.tool_call_id or "", placeholder))
+                did_mask = True
+                continue
+        out.append(m)
     return out, did_mask
 
 

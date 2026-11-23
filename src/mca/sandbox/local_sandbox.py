@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import locale
 import os
 import shutil
 import signal
@@ -21,6 +22,15 @@ import time
 from pathlib import Path
 
 from mca.sandbox.base import GIT_EXCLUDE_RULES, ExecResult, SandboxConfig, copy_repo_isolated
+
+
+def _decode_bytes(data: bytes) -> str:
+    """优先按 UTF-8 解码，失败时回退到系统本地编码（如中文 Windows cmd.exe 的 GBK/cp936）。"""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        enc = locale.getpreferredencoding(False) or "utf-8"
+        return data.decode(enc, errors="replace")
 
 
 class LocalSandbox:
@@ -66,10 +76,28 @@ class LocalSandbox:
         timeout = timeout_s if timeout_s is not None else self.config.default_timeout_s
         t0 = time.perf_counter()
 
+        # Windows 的 cmd.exe 遇到换行符会静默截断，只执行第一行并返回 exit_code=0（极易迷惑模型）
+        if sys.platform == "win32" and ("\n" in command or "\r" in command):
+            return ExecResult(
+                exit_code=2,
+                stdout="",
+                stderr=(
+                    "Windows LocalSandbox (cmd.exe) 不支持多行命令（会在换行处被截断）。"
+                    "请改用单行命令（例如 python -c \"import foo; assert ...\"），或直接使用 run_tests。"
+                ),
+                duration_ms=(time.perf_counter() - t0) * 1000,
+                timed_out=False,
+            )
+
         # Windows 用 CREATE_NEW_PROCESS_GROUP，POSIX 用 start_new_session=True，
         # 这样超时时可以一并杀掉 shell 派生出来的所有孙进程，防止僵尸/孤儿进程残留。
-        # 禁用 .pyc 缓存：同一秒内编辑同长度 .py 文件时，Python 可能命中旧 .pyc 字节码！
-        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        # 禁用 .pyc 缓存 + 强制 Python 子进程使用 UTF-8 输出
+        env = {
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+        }
         kwargs: dict = {
             "cwd": str(self.workspace),
             "env": env,
@@ -96,8 +124,8 @@ class LocalSandbox:
         duration_ms = (time.perf_counter() - t0) * 1000
         return ExecResult(
             exit_code=-1 if timed_out else (proc.returncode if proc.returncode is not None else -1),
-            stdout=stdout_b.decode("utf-8", errors="replace"),
-            stderr=stderr_b.decode("utf-8", errors="replace"),
+            stdout=_decode_bytes(stdout_b),
+            stderr=_decode_bytes(stderr_b),
             duration_ms=duration_ms,
             timed_out=timed_out,
         )

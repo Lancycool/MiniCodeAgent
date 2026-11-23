@@ -63,6 +63,10 @@ async def test_local_sandbox_exec_and_timeout_kills_process(sample_repo: Path):
         slow = await sb.exec(f'"{sys.executable}" -c "import time; time.sleep(10)"', timeout_s=0.5)
         assert slow.timed_out and not slow.ok and slow.duration_ms < 5000
 
+        if sys.platform == "win32":
+            multi = await sb.exec('python -c "\nprint(1)\n"')
+            assert not multi.ok and "不支持多行命令" in multi.stderr
+
 
 def test_docker_hardening_kwargs(tmp_path: Path):
     """不启动 Docker Daemon 也能验证所有安全加固参数是否正确拼装。"""

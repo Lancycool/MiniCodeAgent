@@ -36,7 +36,7 @@ DEFAULT_FIX_SYSTEM_PROMPT = """你是一个严谨的 Python 软件工程师，�
 1. 先用 list_dir / search_code / read_file 了解代码，用 run_tests 确认当前失败现象。
 2. 分析根因后，使用 edit_file 做最小、精确的修改（不要改动测试文件）。
 3. 每次修改后用 run_tests 验证。
-4. 确认所有测试通过后，调用 submit 工具提交修复摘要。"""
+4. 当 run_tests 全部通过且确认没有遗漏边界情况时，直接调用 submit 工具提交修复摘要，不要反复执行多余的临时命令。"""
 
 
 class VerifyResult:

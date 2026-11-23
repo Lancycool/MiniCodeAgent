@@ -20,7 +20,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from mca.sandbox.base import ExecResult, SandboxConfig, copy_repo_isolated
+from mca.sandbox.base import GIT_EXCLUDE_RULES, ExecResult, SandboxConfig, copy_repo_isolated
 
 
 class LocalSandbox:
@@ -50,11 +50,15 @@ class LocalSandbox:
 
         # 在副本内初始化全新的 git 仓库作为基线，用于 checkpoint / rollback / diff
         await self._git("init", "-q")
+        # 写入 .git/info/exclude，过滤运行测试生成的 __pycache__/*.pyc，保持 diff 干净
+        (self.workspace / ".git" / "info" / "exclude").write_text(GIT_EXCLUDE_RULES, encoding="utf-8")
         await self._git("config", "user.email", "agent@minicode.local")
         await self._git("config", "user.name", "MiniCodeAgent")
         await self._git("add", "-A")
         await self._git("commit", "-q", "--allow-empty", "-m", "baseline")
         res = await self._git("rev-parse", "HEAD")
+        if not res.ok or not res.stdout.strip():
+            raise RuntimeError(f"Failed to initialize git baseline: {res.stderr}")
         self.baseline_sha = res.stdout.strip()
         self.startup_ms = (time.perf_counter() - t0) * 1000
 

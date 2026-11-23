@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from mca.sandbox.base import ExecResult, SandboxConfig, copy_repo_isolated
+from mca.sandbox.base import GIT_EXCLUDE_RULES, ExecResult, SandboxConfig, copy_repo_isolated
 
 
 def build_container_kwargs(workspace: Path, config: SandboxConfig) -> dict[str, Any]:
@@ -46,6 +46,8 @@ def build_container_kwargs(workspace: Path, config: SandboxConfig) -> dict[str, 
         "security_opt": ["no-new-privileges:true"],
         "read_only": True,
         "tmpfs": {"/tmp": "rw,noexec,nosuid,size=128m"},
+        # 根文件系统只读时，把 HOME 指向可写的 /tmp，避免 git/pytest 写 ~/.gitconfig 报错
+        "environment": {"HOME": "/tmp", "PYTHONDONTWRITEBYTECODE": "1"},
     }
 
 
@@ -82,8 +84,8 @@ class DockerSandbox:
         kwargs = build_container_kwargs(self.workspace, self.config)
         self._container = await asyncio.to_thread(self._client.containers.run, **kwargs)
 
-        # 容器内初始化 git 基线（safe.directory 避免挂载卷 UID 差异引发 git 报错）
-        await self.exec(
+        # 容器内初始化 git 基线（HOME=/tmp 使 --global 写 /tmp/.gitconfig，绕开只读根文件系统）
+        init_res = await self.exec(
             "git config --global --add safe.directory /workspace && "
             "git init -q && "
             "git config user.email agent@minicode.local && "
@@ -91,7 +93,14 @@ class DockerSandbox:
             "git add -A && "
             "git commit -q --allow-empty -m baseline"
         )
+        if not init_res.ok:
+            raise RuntimeError(f"DockerSandbox git init failed: {init_res.combined_output()}")
+        # 写入 .git/info/exclude，保持 diff 干净
+        (self.workspace / ".git" / "info" / "exclude").write_text(GIT_EXCLUDE_RULES, encoding="utf-8")
+
         res = await self.exec("git rev-parse HEAD")
+        if not res.ok or not res.stdout.strip():
+            raise RuntimeError(f"DockerSandbox failed to read baseline SHA: {res.combined_output()}")
         self.baseline_sha = res.stdout.strip()
         self.startup_ms = (time.perf_counter() - t0) * 1000
 

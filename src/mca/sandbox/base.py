@@ -69,6 +69,10 @@ class Sandbox(Protocol):
     async def __aexit__(self, exc_type, exc, tb) -> None: ...
 
 
+# 写入 .git/info/exclude（不污染仓库自身的 .gitignore），避免运行测试产生的缓存污染 git diff
+GIT_EXCLUDE_RULES = "__pycache__/\n*.py[cod]\n.pytest_cache/\n.coverage\n*.egg-info/\n"
+
+
 def copy_repo_isolated(src: Path, dst: Path) -> None:
     """将目标仓库拷贝到沙箱工作区。
 

@@ -41,6 +41,10 @@ async def test_local_sandbox_checkpoint_rollback_and_diff(sample_repo: Path):
 
         diff = await sb.diff()
         assert "-    return a - b" in diff and "+    return a + b" in diff
+        # 运行产生的 __pycache__ 不应污染 diff
+        (sb.workspace / "__pycache__").mkdir()
+        (sb.workspace / "__pycache__" / "app.cpython-313.pyc").write_bytes(b"\x00\x01")
+        assert "__pycache__" not in await sb.diff()
 
         # 再做一次坏修改并添加垃圾文件，然后回滚到 sha1
         (sb.workspace / "app.py").write_text("BROKEN\n", encoding="utf-8")
@@ -73,3 +77,4 @@ def test_docker_hardening_kwargs(tmp_path: Path):
     assert "no-new-privileges:true" in kw["security_opt"]
     assert kw["read_only"] is True
     assert "/tmp" in kw["tmpfs"]
+    assert kw["environment"]["HOME"] == "/tmp"

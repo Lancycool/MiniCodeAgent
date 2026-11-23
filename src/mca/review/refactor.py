@@ -102,7 +102,7 @@ async def safe_refactor_hotspot(
         llm=llm,
         registry=ToolRegistry(fix_tools(include_ast=True)),
         sandbox=sandbox,
-        budget=budget or Budget(max_steps=15, max_tokens=60_000),
+        budget=budget or Budget(max_steps=15, max_tokens=120_000),
         loop_guard=LoopGuard(enabled=True),
         tracer=tracer,
         system_prompt=REFACTOR_SYSTEM_PROMPT,

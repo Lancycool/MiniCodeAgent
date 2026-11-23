@@ -56,9 +56,14 @@ class EditFileTool(Tool):
             raise ToolError("old_str 与 new_str 完全相同，未发生任何修改。")
 
         try:
-            original = p.read_text(encoding="utf-8")
+            raw_bytes = p.read_bytes()
+            original_raw = raw_bytes.decode("utf-8")
         except UnicodeDecodeError:
             raise ToolError(f"'{rel}' 不是 UTF-8 文本文件，无法编辑。") from None
+
+        # 保留文件原有换行符风格（Windows 下直接 write_text 会把 LF 转为 CRLF，污染 Linux 仓库 git diff）
+        line_ending = "\r\n" if "\r\n" in original_raw else "\n"
+        original = original_raw.replace("\r\n", "\n")
 
         # ② 唯一性检查
         count = original.count(params.old_str)
@@ -89,8 +94,9 @@ class EditFileTool(Tool):
                     f"请检查缩进、括号、冒号后重新调用 edit_file。"
                 ) from None
 
-        # ④ 写入文件 + git checkpoint
-        p.write_text(updated, encoding="utf-8")
+        # ④ 写入文件（严格保留原换行符）+ git checkpoint
+        with p.open("w", encoding="utf-8", newline=line_ending) as f:
+            f.write(updated)
         sha_note = ""
         if ctx.sandbox is not None:
             sha = await ctx.sandbox.checkpoint(f"edit {rel}")

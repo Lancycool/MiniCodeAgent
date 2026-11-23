@@ -15,7 +15,15 @@ from pathlib import Path
 
 from mca.agent import AgentLoop, Budget, ContextConfig, ContextManager, LoopGuard
 from mca.config import LLMSettings
-from mca.harness import PRESET_CONFIGS, builtin_tasks, run_benchmark, save_benchmark_results
+from mca.harness import (
+    PRESET_CONFIGS,
+    builtin_tasks,
+    fetch_swebench_lite,
+    run_benchmark,
+    run_swebench,
+    save_benchmark_results,
+    save_swebench_outputs,
+)
 from mca.llm import OpenAICompatClient
 from mca.observability import TraceStore, Tracer, format_run_replay, format_tool_stats
 from mca.review import ReviewReport, judge_hotspots, rank_hotspots, safe_refactor_hotspot, save_report, scan_repository
@@ -67,6 +75,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument("--limit", type=int, default=0, help="只跑前 N 道题（0 表示全部）")
     p_bench.add_argument("--docker", action="store_true", help="使用 DockerSandbox")
     p_bench.add_argument("--out", type=str, default="bench/results", help="消融报告输出目录")
+
+    # ---- swebench ----
+    p_swe = sub.add_parser("swebench", help="在 Docker 沙箱中运行真实 SWE-bench Lite 子集评测")
+    p_swe.add_argument("--repo", type=str, default="pallets/flask", help="目标仓库（默认 pallets/flask）")
+    p_swe.add_argument("--ids", type=str, default="", help="逗号分隔的 instance_id（留空按 --limit 自动挑选）")
+    p_swe.add_argument("--limit", type=int, default=2, help="抽取题数（默认 2）")
+    p_swe.add_argument("--configs", type=str, default="full", help=f"逗号分隔配置（可选: {', '.join(PRESET_CONFIGS)}）")
+    p_swe.add_argument("--image", type=str, default="mca-swebench-flask:3.11", help="Docker 评测镜像名")
+    p_swe.add_argument("--concurrency", type=int, default=1, help="并发容器数")
+    p_swe.add_argument("--out", type=str, default="bench/results", help="报告与 preds.jsonl 输出目录")
 
     return p
 
@@ -178,6 +196,46 @@ async def _cmd_bench(args: argparse.Namespace) -> None:
     print(f"\n结果已保存：\n  - {md_path.resolve()}\n  - {json_path.resolve()}")
 
 
+async def _cmd_swebench(args: argparse.Namespace) -> None:
+    cfg_names = [c.strip() for c in args.configs.split(",") if c.strip()]
+    configs = []
+    for name in cfg_names:
+        if name not in PRESET_CONFIGS:
+            raise SystemExit(f"未知配置 '{name}'，可选: {', '.join(PRESET_CONFIGS)}")
+        # 真实大仓库适当放宽步数与 Token 预算
+        base = PRESET_CONFIGS[name]
+        configs.append(
+            base.__class__(
+                name=base.name,
+                include_ast=base.include_ast,
+                inject_repo_map=base.inject_repo_map,
+                mask_enabled=base.mask_enabled,
+                summary_enabled=base.summary_enabled,
+                loop_guard_enabled=base.loop_guard_enabled,
+                max_steps=20,
+                max_tokens=250_000,
+            )
+        )
+
+    ids = [x.strip() for x in args.ids.split(",") if x.strip()] or None
+    instances = fetch_swebench_lite(repo=args.repo, instance_ids=ids, limit=args.limit)
+    print(f"加载 SWE-bench Lite 真实任务 {len(instances)} 题: {[i.instance_id for i in instances]}")
+    print(f"使用 Docker 镜像 `{args.image}`，配置={[c.name for c in configs]}，并发数={args.concurrency}...")
+
+    settings = LLMSettings()
+    results = await run_swebench(
+        instances,
+        configs,
+        llm_factory=lambda: OpenAICompatClient(settings),
+        image=args.image,
+        concurrency=args.concurrency,
+        db_path=args.db,
+    )
+    preds_path, md_path = save_swebench_outputs(results, Path(args.out))
+    print("\n" + md_path.read_text(encoding="utf-8"))
+    print(f"\n已保存：\n  - 标准 preds.jsonl: {preds_path.resolve()}\n  - 评测报告: {md_path.resolve()}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -189,6 +247,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_trace(args)
     elif args.command == "bench":
         asyncio.run(_cmd_bench(args))
+    elif args.command == "swebench":
+        asyncio.run(_cmd_swebench(args))
 
 
 if __name__ == "__main__":

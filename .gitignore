@@ -12,6 +12,7 @@ __pycache__/
 *.db
 *.sqlite
 bench/results/
+bench/swebench_cache/
 runs/
 
 # docs

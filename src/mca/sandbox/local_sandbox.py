@@ -68,8 +68,11 @@ class LocalSandbox:
 
         # Windows 用 CREATE_NEW_PROCESS_GROUP，POSIX 用 start_new_session=True，
         # 这样超时时可以一并杀掉 shell 派生出来的所有孙进程，防止僵尸/孤儿进程残留。
+        # 禁用 .pyc 缓存：同一秒内编辑同长度 .py 文件时，Python 可能命中旧 .pyc 字节码！
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
         kwargs: dict = {
             "cwd": str(self.workspace),
+            "env": env,
             "stdout": asyncio.subprocess.PIPE,
             "stderr": asyncio.subprocess.PIPE,
         }

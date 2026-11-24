@@ -19,13 +19,14 @@ from mca.harness import (
     PRESET_CONFIGS,
     builtin_tasks,
     fetch_swebench_lite,
+    fetch_top10_representative,
     run_benchmark,
     run_swebench,
     save_benchmark_results,
     save_swebench_outputs,
 )
 from mca.llm import OpenAICompatClient
-from mca.observability import TraceStore, Tracer, format_run_replay, format_tool_stats
+from mca.observability import TraceStore, Tracer, build_otel_sink, format_run_replay, format_tool_stats
 from mca.review import ReviewReport, judge_hotspots, rank_hotspots, safe_refactor_hotspot, save_report, scan_repository
 from mca.sandbox import DockerSandbox, LocalSandbox
 from mca.tools import ToolRegistry, fix_tools
@@ -36,6 +37,13 @@ DEFAULT_DB = Path("runs/traces.db")
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="mca", description="MiniCodeAgent — 自研代码诊断与修复 Agent 引擎")
     p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="SQLite Trace 数据库路径")
+    p.add_argument(
+        "--otel",
+        type=str,
+        default=None,
+        choices=["none", "console", "otlp"],
+        help="OpenTelemetry 追踪导出模式（默认读取 MCA_OTEL_EXPORTER 或 none）",
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     # ---- fix ----
@@ -78,12 +86,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ---- swebench ----
     p_swe = sub.add_parser("swebench", help="在 Docker 沙箱中运行真实 SWE-bench Lite 子集评测")
+    p_swe.add_argument("--preset", type=str, default="", choices=["", "top10"], help="内置代表题集（top10 = 10 道跨仓库题）")
     p_swe.add_argument("--repo", type=str, default="pallets/flask", help="目标仓库（默认 pallets/flask）")
     p_swe.add_argument("--ids", type=str, default="", help="逗号分隔的 instance_id（留空按 --limit 自动挑选）")
     p_swe.add_argument("--limit", type=int, default=2, help="抽取题数（默认 2）")
     p_swe.add_argument("--configs", type=str, default="full", help=f"逗号分隔配置（可选: {', '.join(PRESET_CONFIGS)}）")
-    p_swe.add_argument("--image", type=str, default="mca-swebench-flask:3.11", help="Docker 评测镜像名")
-    p_swe.add_argument("--concurrency", type=int, default=1, help="并发容器数")
+    p_swe.add_argument("--image", type=str, default="mca-swebench-py:3.11", help="Docker 评测镜像名")
+    p_swe.add_argument("--concurrency", type=int, default=2, help="并发容器数")
     p_swe.add_argument("--out", type=str, default="bench/results", help="报告与 preds.jsonl 输出目录")
 
     return p
@@ -92,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
 async def _cmd_fix(args: argparse.Namespace) -> None:
     repo = Path(args.repo).resolve()
     store = TraceStore(args.db)
+    otel = build_otel_sink(args.otel)
     sandbox = DockerSandbox(repo) if args.docker else LocalSandbox(repo)
     async with sandbox as sb:
         loop = AgentLoop(
@@ -102,11 +112,13 @@ async def _cmd_fix(args: argparse.Namespace) -> None:
             loop_guard=LoopGuard(enabled=True),
             context_manager=ContextManager(ContextConfig(mask_enabled=not args.no_mask)),
             inject_repo_map=not args.no_ast,
-            tracer=Tracer(store),
+            tracer=Tracer(store, otel=otel),
         )
         res = await loop.run(args.issue, task_id=repo.name, mode="fix")
     print(format_run_replay(store, res.run_id))
     print("\n=== Final git diff ===\n" + (res.final_patch or "(无改动)"))
+    if otel is not None:
+        otel.shutdown()
     store.close()
 
 
@@ -217,8 +229,11 @@ async def _cmd_swebench(args: argparse.Namespace) -> None:
             )
         )
 
-    ids = [x.strip() for x in args.ids.split(",") if x.strip()] or None
-    instances = fetch_swebench_lite(repo=args.repo, instance_ids=ids, limit=args.limit)
+    if args.preset == "top10":
+        instances = fetch_top10_representative()
+    else:
+        ids = [x.strip() for x in args.ids.split(",") if x.strip()] or None
+        instances = fetch_swebench_lite(repo=args.repo, instance_ids=ids, limit=args.limit)
     print(f"加载 SWE-bench Lite 真实任务 {len(instances)} 题: {[i.instance_id for i in instances]}")
     print(f"使用 Docker 镜像 `{args.image}`，配置={[c.name for c in configs]}，并发数={args.concurrency}...")
 

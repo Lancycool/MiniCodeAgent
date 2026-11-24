@@ -10,7 +10,9 @@ from mca.harness.runner import (
 from mca.harness.swebench import (
     SWEBenchEvalResult,
     SWEBenchInstance,
+    TOP10_REPRESENTATIVE,
     fetch_swebench_lite,
+    fetch_top10_representative,
     run_swebench,
     save_swebench_outputs,
 )

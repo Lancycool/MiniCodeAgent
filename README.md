@@ -108,16 +108,3 @@ mca bench --configs full,no_ast --concurrency 2
 
 ---
 
-## 设计文档与开发排障日志
-
-| 文档 | 内容 |
-|---|---|
-| [01 项目定位与需求](docs/01_项目定位与需求.md) | 目标、工作模式与范围边界 |
-| [02 系统架构](docs/02_系统架构.md) | 分层架构、技术选型与目录结构 |
-| [03 核心模块设计](docs/03_核心模块设计.md) | FSM 状态机、工具层、AST 检索、上下文管理、沙箱与 LoopGuard |
-| [04 Review 模式设计](docs/04_Review模式设计.md) | 静态分析 + LLM 研判 + 测试护航安全重构 |
-| [05 数据模型与可观测性](docs/05_数据模型与可观测性.md) | SQLite 四表 Schema 与分析 SQL |
-| [06 评测 Harness](docs/06_评测Harness.md) | MiniBench 构造与消融实验设计 |
-| [开发排障日志 (8 个真实案例)](docs/debug_log.md) | `.env` 密钥泄露防御、只读容器 `$HOME` 冲突、CPython `.pyc` 缓存碰撞、上下文失忆等 |
-| [简历与面试准备](docs/08_简历与面试准备.md) | 高频面试追问与回答要点 |
-| [源码精读清单](docs/09_源码精读清单.md) | mini-swe-agent / SWE-agent / Aider / Codex CLI |

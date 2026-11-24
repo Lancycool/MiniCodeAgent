@@ -31,6 +31,35 @@ from mca.tools import ToolRegistry, fix_tools
 
 HF_FILTER_URL = "https://datasets-server.huggingface.co/filter"
 
+# 精选 10 道代表性 SWE-bench Lite 题目（纯 Python、离线可用、覆盖 Web 框架 + 测试框架/AST/导入/缓存/CLI）
+TOP10_REPRESENTATIVE: list[tuple[str, str]] = [
+    ("pallets/flask", "pallets__flask-4992"),
+    ("pallets/flask", "pallets__flask-5063"),
+    ("pallets/flask", "pallets__flask-4045"),
+    ("pytest-dev/pytest", "pytest-dev__pytest-11143"),
+    ("pytest-dev/pytest", "pytest-dev__pytest-11148"),
+    ("pytest-dev/pytest", "pytest-dev__pytest-8365"),
+    ("pytest-dev/pytest", "pytest-dev__pytest-7490"),
+    ("pytest-dev/pytest", "pytest-dev__pytest-7432"),
+    ("pytest-dev/pytest", "pytest-dev__pytest-7373"),
+    ("pytest-dev/pytest", "pytest-dev__pytest-7220"),
+]
+
+
+def fetch_top10_representative(cache_dir: Path = Path("bench/swebench_cache")) -> list[SWEBenchInstance]:
+    """加载精选的 10 道跨仓库 SWE-bench Lite 代表题目。"""
+    by_repo: dict[str, list[str]] = {}
+    for repo, iid in TOP10_REPRESENTATIVE:
+        by_repo.setdefault(repo, []).append(iid)
+    out: list[SWEBenchInstance] = []
+    for repo, ids in by_repo.items():
+        items = fetch_swebench_lite(repo=repo, instance_ids=ids, limit=len(ids), cache_dir=cache_dir)
+        by_id = {x.instance_id: x for x in items}
+        for iid in ids:
+            if iid in by_id:
+                out.append(by_id[iid])
+    return out
+
 SWEBENCH_SYSTEM_PROMPT = """你是一位资深开源项目维护者，正在 Docker 隔离沙箱中修复真实 GitHub Issue（SWE-bench Lite）。
 工作流：
 1. 结合 Repo Map 和 AST 工具（search_symbol / find_references / view_outline / read_file）快速定位目标源码。
@@ -96,9 +125,9 @@ def fetch_swebench_lite(
         where = urllib.parse.quote(f'"repo"=\'{repo}\'')
         url = (
             f"{HF_FILTER_URL}?dataset=princeton-nlp/SWE-bench_Lite"
-            f"&config=default&split=test&where={where}&length=50"
+            f"&config=default&split=test&where={where}&length=15"
         )
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with urllib.request.urlopen(url, timeout=45) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         rows = [item["row"] for item in payload.get("rows", [])]
         cache_file.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -209,7 +238,7 @@ async def evaluate_swebench_instance(
                 repo_map_max_chars=4000,
                 tracer=tracer,
                 system_prompt=SWEBENCH_SYSTEM_PROMPT,
-                protected_globs=("tests/*", "test_*.py"),
+                protected_globs=("tests/*", "testing/*", "test_*.py"),
             )
             res = await loop.run(inst.problem_statement, task_id=f"{cfg.name}:{inst.instance_id}", mode="fix")
 
@@ -233,10 +262,11 @@ async def evaluate_swebench_instance(
 
 
 async def _verify_with_official_test_patch(sb: DockerSandbox, inst: SWEBenchInstance) -> tuple[bool, bool]:
-    # 对标 SWE-bench 官方评测逻辑：先清理 Agent 可能在 tests/ 下创建的临时文件或改动，
+    # 对标 SWE-bench 官方评测逻辑：先清理 Agent 可能在 tests/ 或 testing/ 下创建的临时文件或改动，
     # 避免与官方隐藏 test_patch 冲突导致 git apply 失败！
-    await sb.exec(f"git checkout {shlex.quote(sb.baseline_sha)} -- tests 2>/dev/null || true")
-    await sb.exec("git clean -fd tests 2>/dev/null || true")
+    for test_dir in ("tests", "testing"):
+        await sb.exec(f"git checkout {shlex.quote(sb.baseline_sha)} -- {test_dir} 2>/dev/null || true")
+        await sb.exec(f"git clean -fd {test_dir} 2>/dev/null || true")
 
     # 将官方 test_patch 写入工作区临时文件后用 git apply 应用
     patch_file = sb.workspace / ".mca_official_test.patch"
